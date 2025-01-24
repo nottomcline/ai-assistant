@@ -2,7 +2,7 @@ chat_exchange.py
 *.json
 __pycache__/
 logs/*
-audio.mp3
+own_recorded_audio.wav
 subtitle.txt
 .env
 !.env.example

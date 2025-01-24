@@ -55,7 +55,7 @@ def main():
                 transcription = recognizer.recognize_google(audio, language=LANGUAGE)
                 if transcription.lower() == "hey tom":
                     # Record audio
-                    filename = "input.wav"
+                    filename = "own_recorded_audio.wav"
                     print("Say your question...")
                     with sr.Microphone() as source:
                         recognizer = sr.Recognizer()
