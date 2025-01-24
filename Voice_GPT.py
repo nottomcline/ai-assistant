@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import list
 
 import openai
 import pyttsx3
 import speech_recognition as sr
 
-from .credentials import OPENAI_API_KEY
+from credentials import OPENAI_API_KEY
 
 openai.api_key = OPENAI_API_KEY
 
 # initialize the text-to-speech engine
 engine = pyttsx3.init()
+LANGUAGE = "de-DE"
 
 
 def transcribe_audio_to_text(filename: str) -> str:
@@ -20,7 +20,7 @@ def transcribe_audio_to_text(filename: str) -> str:
     with sr.AudioFile(filename) as source:
         audio = recognizer.record(source)
     try:
-        return recognizer.recognize_bing(audio)
+        return recognizer.recognize_google(audio, language=LANGUAGE)
     except Exception as e:
         print(f"An error occurred: {e}")
 
@@ -52,11 +52,11 @@ def main():
             recognizer = sr.Recognizer()
             audio = recognizer.listen(source)
             try:
-                transcription = recognizer.recognize_bing(audio)
+                transcription = recognizer.recognize_google(audio, language=LANGUAGE)
                 if transcription.lower() == "hey tom":
                     # Record audio
                     filename = "input.wav"
-                    print("Say your quiestion...")
+                    print("Say your question...")
                     with sr.Microphone() as source:
                         recognizer = sr.Recognizer()
                         source.pause_threshold = 1
