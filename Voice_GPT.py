@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-import openai
 import pyttsx3
 import speech_recognition as sr
+from openai import OpenAI
 
 from credentials import OPENAI_API_KEY
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 # initialize the text-to-speech engine
 engine = pyttsx3.init()
@@ -28,15 +28,16 @@ def transcribe_audio_to_text(filename: str) -> str:
 def generate_response(
     prompt: str | list[str] | Iterable[int] | Iterable[Iterable[int]],
 ) -> str:
-    response = openai.completions.create(
-        engine="text-davinci-003",
-        prompt=prompt,
-        max_tokens=4000,
-        n=1,
-        stop=None,
-        temperature=0.5,
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="gpt-4o",
     )
-    return response["choices"][0]["text"]
+    return chat_completion.choices[0].message.content
 
 
 def speak_text(text: str):
