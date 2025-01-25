@@ -3,3 +3,4 @@ SpeechRecognition
 openai
 python-decouple
 PyAudio
+simpleaudio
