@@ -3,3 +3,7 @@ SpeechRecognition
 openai
 python-decouple
 PyAudio
+---
+# for voice GPTv2
+PySocks
+websocket-client
