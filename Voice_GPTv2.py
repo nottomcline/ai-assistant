@@ -112,14 +112,15 @@ def receive_audio_from_websocket(ws):
                 elif event_type == "response.created":
                     print("🤖 AI speaking:")
 
-                elif event_type == "response.output_item.done":
-                    output_item = message["item"]
-                    transcript = output_item["content"][0]["transcript"]
-                    print(transcript)  # print answer
-
                 elif event_type == "response.audio.delta":
                     audio_content = base64.b64decode(message["delta"])
                     audio_buffer.extend(audio_content)
+
+                elif event_type == "response.audio_transcript.delta":
+                    print(message["delta"], end="", flush=True)  # Print progressively
+
+                elif event_type == "response.audio_transcript.done":
+                    print()  # Print newline when final transcript is received
 
                 elif event_type == "input_audio_buffer.speech_started":
                     print("🤠 ME speaking.")
