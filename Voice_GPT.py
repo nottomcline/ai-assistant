@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import base64
+import wave
 from collections.abc import Iterable
 
-import simpleaudio as sa
+import pyaudio
 import speech_recognition as sr
 from openai import OpenAI
 
@@ -13,6 +14,9 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # initialize the text-to-speech engine
 LANGUAGE = "de-DE"
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+CHUNK = 512
 
 
 def transcribe_audio_to_text(filename: str) -> str:
@@ -32,7 +36,13 @@ def generate_response(
         model="gpt-4o-audio-preview",
         modalities=["text", "audio"],
         audio={"voice": "echo", "format": "wav"},
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {
+                "role": "system",
+                "content": "Du bist ein Schauspieler und spielst die Rolle einer ständig genervten und gehässigen Person, die zudem noch passiv aggressiv ist und sehr ironisch zu gleich. Außerdem sollst du mich manchmal auf den arm nehmen.",
+            },
+            {"role": "user", "content": prompt},
+        ],
         max_completion_tokens=4000,
         n=1,
         temperature=0.5,
@@ -41,9 +51,28 @@ def generate_response(
 
 
 def play_wav(file_path: str):
-    wave_obj = sa.WaveObject.from_wave_file(file_path)
-    play_obj = wave_obj.play()
-    return play_obj
+    player = pyaudio.PyAudio()
+
+    with wave.open(file_path, "rb") as wf:
+        stream = player.open(
+            format=player.get_format_from_width(wf.getsampwidth()),
+            channels=wf.getnchannels(),
+            rate=wf.getframerate(),
+            output=True,
+        )
+
+        # Read the first chunk of data
+        data = wf.readframes(CHUNK)
+
+        # Play the audio
+        while data:
+            stream.write(data)
+            data = wf.readframes(CHUNK)
+
+        stream.stop_stream()
+        stream.close()
+
+    player.terminate()  # Ensure PyAudio is properly closed
 
 
 def main():
@@ -83,6 +112,7 @@ def main():
                             f.write(wav_bytes)
 
                         # Print audio response as text
+                        print("transcribe audio to text...")
                         text_response = transcribe_audio_to_text(
                             gpt_response_audio_file
                         )
@@ -90,19 +120,11 @@ def main():
 
                         # Play the WAV file
                         play_wav(gpt_response_audio_file)
-
+            except sr.WaitTimeoutError:
+                print("Listening timed out. Restarting...")
             except Exception as e:
                 print(f"An error occurred: {e}")
 
 
-def test():
-    while True:
-        gpt_response_audio_file = "gpt-response_audio.wav"
-        playAudio = play_wav(gpt_response_audio_file)
-
-        if playAudio and playAudio.is_playing():
-            playAudio = None
-
-
 if __name__ == "__main__":
-    test()
+    main()
