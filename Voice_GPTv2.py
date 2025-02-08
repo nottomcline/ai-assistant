@@ -195,7 +195,36 @@ def stop_talking(transcribed_text: str):
     )
 
 
-def send_mic_audio_to_websocket(ws):
+def send_transcription_to_websocket(ws, user_text: str):
+    create_conversation = json.dumps(
+        {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_text}],
+            },
+        }
+    )
+    try:
+        ws.send(create_conversation)  # initiate conversation
+        create_response = json.dumps(
+            {
+                "type": "response.create",
+                "response": {
+                    "output_audio_format": "pcm16",
+                },
+            }
+        )
+        try:
+            ws.send(create_response)  # request a response
+        except Exception as e:
+            print(f"Error sending mic audio: {e}")
+    except Exception as e:
+        print(f"Error sending mic audio: {e}")
+
+
+def transcribe_and_send_to_websocket(ws):
     """Send microphone audio data to the WebSocket"""
     try:
         while not stop_event.is_set():
@@ -211,34 +240,12 @@ def send_mic_audio_to_websocket(ws):
                     stop_audio_playback()
                     break
 
-            if user_text:
+            # only send data if AI isn't talking anymore
+            if user_text and len(audio_buffer) == 0:
                 print(f"\n🤠 ME speaking:\n{user_text}")
-                # create_conversation = json.dumps(
-                #     {
-                #         "type": "conversation.item.create",
-                #         "item": {
-                #             "type": "message",
-                #             "role": "user",
-                #             "content": [{"type": "input_text", "text": user_text}],
-                #         },
-                #     }
-                # )
-                # try:
-                #     ws.send(create_conversation)  # initiate conversation
-                #     create_response = json.dumps(
-                #         {
-                #             "type": "response.create",
-                #             "response": {
-                #                 "output_audio_format": "pcm16",
-                #             },
-                #         }
-                #     )
-                #     try:
-                #         ws.send(create_response)  # request a response
-                #     except Exception as e:
-                #         print(f"Error sending mic audio: {e}")
-                # except Exception as e:
-                #     print(f"Error sending mic audio: {e}")
+
+                send_transcription_to_websocket(ws, user_text)
+
     except Exception as e:
         print(f"Exception in send_mic_audio_to_websocket thread: {e}")
     finally:
@@ -378,7 +385,9 @@ def connect_to_openai():
         )
         receive_thread.start()
 
-        mic_thread = threading.Thread(target=send_mic_audio_to_websocket, args=(ws,))
+        mic_thread = threading.Thread(
+            target=transcribe_and_send_to_websocket, args=(ws,)
+        )
         mic_thread.start()
 
         # Wait for stop_event to be set
