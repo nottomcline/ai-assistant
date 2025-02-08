@@ -7,3 +7,4 @@ PyAudio
 # for voice GPTv2
 PySocks
 websocket-client
+faster_whisper

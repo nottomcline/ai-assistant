@@ -1,32 +1,62 @@
 import base64
 import json
 import queue
+import random
 import socket
 import threading
 import time
 
+import numpy as np
 import pyaudio
 import socks
+import speech_recognition as sr
 import websocket
+from faster_whisper import WhisperModel
 
 from credentials import OPENAI_API_KEY
 
 socket.socket = socks.socksocket
 
 WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
-
-CHUNK_SIZE = 1024
+CHUNK_SIZE = 4096
 RATE = 24000
 FORMAT = pyaudio.paInt16
+AI_NAME = "jerry"
+REENGAGE_DELAY_MS = 500
+SILENCE_THRESHOLD = 1
+CHANNELS = 1
+
+model = WhisperModel(
+    "tiny",
+    device="cpu",
+    compute_type="float32",
+    num_workers=16,
+)
 
 audio_buffer = bytearray()
 mic_queue = queue.Queue()
-
-stop_event = threading.Event()
+gpt_queue = queue.Queue()
+recorder = sr.Recognizer()
+recorder.energy_threshold = 1000
+# dynamic energy compensation, lowers the energy threshold to a point where SpeechRecognizer never stops recording
+recorder.dynamic_energy_threshold = False
 
 mic_on_at = 0
-mic_active = None
-REENGAGE_DELAY_MS = 500
+stop_event = threading.Event()
+
+
+def recorder_callback(_, audio: sr.AudioData) -> None:
+    """
+    Threaded callback function to receive audio data when recordings finish.
+    audio: An AudioData containing the recorded bytes.
+    """
+    # Grab the raw bytes and push it into the thread safe queue.
+    data = audio.get_raw_data()
+    # convert audio based on openAI's requirements:
+    # see input_audio_format -> https://platform.openai.com/docs/api-reference/realtime-sessions/create
+    data_formatted = audio.get_raw_data(convert_rate=RATE, convert_width=2)
+    mic_queue.put(data)
+    gpt_queue.put(data_formatted)
 
 
 def clear_audio_buffer():
@@ -39,16 +69,121 @@ def stop_audio_playback():
     is_playing = False
 
 
-def mic_callback(in_data, frame_count, time_info, status):
-    """Handle microphone input and put it into a queue"""
-    global mic_on_at, mic_active
+def should_ai_respond(user_text: str) -> bool:
+    """Determines if AI should respond based on input type and probability."""
 
-    if mic_active:
-        print("🎙️🟢 Mic active")
-        mic_active = True
-    mic_queue.put(in_data)
+    question_words = {
+        "wer",
+        "was",
+        "wo",
+        "wann",
+        "warum",
+        "wie",
+        "macht",
+        "ist",
+        "kann",
+        "könnte",
+        "sollte",
+        "würde",
+        "wird",
+        "hat",
+        "sind",
+        "bin",
+        "welche",
+        "wessen",
+        "wen",
+        "vielleicht",
+        "dürfen",
+        "ob",
+        "wenn",
+        "wie viele",
+        "wie viel",
+        "was wäre wenn",
+        "warum nicht",
+        "was ist mit",
+        "glaubst du",
+        "ist es wahr, dass",
+        "bist du sicher",
+        "wirklich",
+        "ernsthaft",
+    }
 
-    return (None, pyaudio.paContinue)
+    indirect_question_words = {
+        "könnte",
+        "würde",
+        "sollte",
+        "kann",
+        "dürfen",
+        "vielleicht",
+        "müssen",
+        "brauchen",
+        "wollen",
+        "fragen",
+        "nachfragen",
+        "wundern",
+    }
+
+    subjunctive_words = {
+        "wäre",
+        "hätte",
+        "würde",
+        "sei",
+        "habe",
+    }
+
+    uncertainty_phrases = [
+        "ich bin mir nicht sicher",
+        "ich weiß nicht",
+        "ich frage mich",
+        "ist das wahr",
+        "ist es möglich",
+        "glaubst du",
+        "was wäre wenn",
+    ]
+
+    user_text_lower = user_text.lower()
+    words = user_text_lower.split()
+    answer_chance = random.random()
+
+    is_question = (
+        any(word in question_words for word in words)
+        or any(word in indirect_question_words for word in words)
+        or any(word in subjunctive_words for word in words)
+        or any(phrase in user_text_lower for phrase in uncertainty_phrases)
+        or user_text.strip().endswith("?")
+    )
+
+    if AI_NAME in words:
+        return True  # 100% chance to respond
+    elif is_question:
+        return answer_chance < 0.9  # 90% chance to respond to questions
+    else:
+        return answer_chance < 0.3  # 30% chance to respond to statements
+
+
+def transcribe_audio_to_text(mic_chunk: any) -> str:
+    """Transcribes audio chunks in real-time using faster_whisper."""
+    try:
+        audio_data = bytearray()
+        audio_data.extend(mic_chunk)  # Append directly
+
+        # Convert in-ram buffer to something the model can use directly without needing a temp file.
+        # Convert data from 16 bit wide integers to floating point with a width of 32 bits.
+        # Clamp the audio stream frequency to a PCM wavelength compatible default of 32768hz max.
+        audio_np = (
+            np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+        )
+
+        # Perform transcription using the Whisper model
+        segments, _ = model.transcribe(audio_np, language="de", beam_size=10)
+
+        # Extract and return the transcribed text
+        transcribed_text = " ".join([segment.text for segment in segments])
+
+        return transcribed_text.strip()
+    except Exception as e:
+        print(f"Error in transcription: {e}")
+        return ""
 
 
 def send_mic_audio_to_websocket(ws):
@@ -57,14 +192,38 @@ def send_mic_audio_to_websocket(ws):
         while not stop_event.is_set():
             if not mic_queue.empty():
                 mic_chunk = mic_queue.get()
-                encoded_chunk = base64.b64encode(mic_chunk).decode("utf-8")
-                message = json.dumps(
-                    {"type": "input_audio_buffer.append", "audio": encoded_chunk}
-                )
-                try:
-                    ws.send(message)
-                except Exception as e:
-                    print(f"Error sending mic audio: {e}")
+                user_text = transcribe_audio_to_text(mic_chunk)
+
+                if user_text:
+                    print(f"\n🤠 ME speaking:\n {user_text}")
+                    clear_audio_buffer()
+                    stop_audio_playback()
+                    create_conversation = json.dumps(
+                        {
+                            "type": "conversation.item.create",
+                            "item": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [{"type": "input_text", "text": user_text}],
+                            },
+                        }
+                    )
+                    try:
+                        ws.send(create_conversation)  # initiate conversation
+                        create_response = json.dumps(
+                            {
+                                "type": "response.create",
+                                "response": {
+                                    "output_audio_format": "pcm16",
+                                },
+                            }
+                        )
+                        try:
+                            ws.send(create_response)  # request a response
+                        except Exception as e:
+                            print(f"Error sending mic audio: {e}")
+                    except Exception as e:
+                        print(f"Error sending mic audio: {e}")
     except Exception as e:
         print(f"Exception in send_mic_audio_to_websocket thread: {e}")
     finally:
@@ -110,22 +269,23 @@ def receive_audio_from_websocket(ws):
                     send_fc_session_update(ws)
 
                 elif event_type == "response.created":
-                    print("🤖 AI speaking:")
+                    print("\n🤖 AI speaking:")
+
+                elif event_type == "response.audio_transcript.delta":
+                    print(message["delta"], end="", flush=True)  # Print progressively
 
                 elif event_type == "response.audio.delta":
                     audio_content = base64.b64decode(message["delta"])
                     audio_buffer.extend(audio_content)
 
-                elif event_type == "response.audio_transcript.delta":
-                    print(message["delta"], end="", flush=True)  # Print progressively
-
                 elif event_type == "response.audio_transcript.done":
                     print()  # Print newline when final transcript is received
 
-                elif event_type == "input_audio_buffer.speech_started":
-                    print("🤠 ME speaking.")
-                    clear_audio_buffer()
-                    stop_audio_playback()
+                # for debugging
+                # elif event_type == "response.done":
+                #     print(message["response"]["status"])
+                #     print(message["response"]["status_details"]["type"])
+                #     print(message["response"]["status_details"]["reason"])
 
             except Exception as e:
                 print(f"Error receiving audio: {e}")
@@ -140,7 +300,7 @@ def send_fc_session_update(ws):
         "type": "session.update",
         "session": {
             "instructions": (
-                "Du bist ein Schauspieler und spielst die Rolle einer ständig genervten und gehässigen Person,"
+                f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ständig genervten und gehässigen Person spielt,"
                 "die zudem noch passiv aggressiv ist und sehr ironisch zu gleich."
                 "Außerdem sollst du mich manchmal auf den arm nehmen."
             ),
@@ -149,6 +309,7 @@ def send_fc_session_update(ws):
                 "threshold": 0.5,
                 "prefix_padding_ms": 300,
                 "silence_duration_ms": 500,
+                "create_response": True,
             },
             "voice": "ballad",
             "temperature": 1,
@@ -229,20 +390,14 @@ def connect_to_openai():
 
 
 def main():
-    p = pyaudio.PyAudio()
+    player = pyaudio.PyAudio()
+    source = sr.Microphone(sample_rate=RATE)
+    with source:
+        recorder.adjust_for_ambient_noise(source)
 
-    mic_stream = p.open(
+    speaker_stream = player.open(
         format=FORMAT,
-        channels=1,
-        rate=RATE,
-        input=True,
-        stream_callback=mic_callback,
-        frames_per_buffer=CHUNK_SIZE,
-    )
-
-    speaker_stream = p.open(
-        format=FORMAT,
-        channels=1,
+        channels=CHANNELS,
         rate=RATE,
         output=True,
         stream_callback=speaker_callback,
@@ -250,12 +405,15 @@ def main():
     )
 
     try:
-        mic_stream.start_stream()
+        listener_thread = recorder.listen_in_background(
+            source, recorder_callback, phrase_time_limit=2
+        )
+        # mic_stream.start_stream()
         speaker_stream.start_stream()
 
         connect_to_openai()
 
-        while mic_stream.is_active() and speaker_stream.is_active():
+        while recorder.is_active() and speaker_stream.is_active():
             time.sleep(0.1)
 
     except KeyboardInterrupt:
@@ -263,12 +421,11 @@ def main():
         stop_event.set()
 
     finally:
-        mic_stream.stop_stream()
-        mic_stream.close()
+        listener_thread(wait_for_stop=True)
         speaker_stream.stop_stream()
         speaker_stream.close()
 
-        p.terminate()
+        player.terminate()
         print("Audio streams stopped and resources released. Exiting.")
 
 
