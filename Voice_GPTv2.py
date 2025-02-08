@@ -2,6 +2,7 @@ import base64
 import json
 import queue
 import random
+import re
 import socket
 import threading
 import time
@@ -19,15 +20,16 @@ socket.socket = socks.socksocket
 
 WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
 CHUNK_SIZE = 4096
-RATE = 24000
-FORMAT = pyaudio.paInt16
 AI_NAME = "jerry"
 REENGAGE_DELAY_MS = 500
-SILENCE_THRESHOLD = 1
+# set constants based on openAI's requirements
+# see input_audio_format -> https://platform.openai.com/docs/api-reference/realtime-sessions/create
+FORMAT = pyaudio.paInt16
+RATE = 24000
 CHANNELS = 1
 
 model = WhisperModel(
-    "tiny",
+    "medium",
     device="cpu",
     compute_type="float32",
     num_workers=16,
@@ -51,12 +53,8 @@ def recorder_callback(_, audio: sr.AudioData) -> None:
     audio: An AudioData containing the recorded bytes.
     """
     # Grab the raw bytes and push it into the thread safe queue.
-    data = audio.get_raw_data()
-    # convert audio based on openAI's requirements:
-    # see input_audio_format -> https://platform.openai.com/docs/api-reference/realtime-sessions/create
-    data_formatted = audio.get_raw_data(convert_rate=RATE, convert_width=2)
+    data = audio.get_raw_data(convert_rate=RATE)
     mic_queue.put(data)
-    gpt_queue.put(data_formatted)
 
 
 def clear_audio_buffer():
@@ -167,7 +165,7 @@ def transcribe_audio_to_text(mic_chunk: any) -> str:
         audio_data = bytearray()
         audio_data.extend(mic_chunk)  # Append directly
 
-        # Convert in-ram buffer to something the model can use directly without needing a temp file.
+        # Convert in-ram buffer to something the model can use directly without needing a temp audio file.
         # Convert data from 16 bit wide integers to floating point with a width of 32 bits.
         # Clamp the audio stream frequency to a PCM wavelength compatible default of 32768hz max.
         audio_np = (
@@ -186,44 +184,61 @@ def transcribe_audio_to_text(mic_chunk: any) -> str:
         return ""
 
 
+def stop_talking(transcribed_text: str):
+    interruption_phrases = ["halts maul", "sei still", "hör auf", "leck ei"]
+
+    # Remove punctuation from the transcribed text
+    transcribed_text_clean = re.sub(r"[^\w\s]", "", transcribed_text.lower())
+    words = transcribed_text_clean.split()
+    return "stopp" in words or any(
+        phrase in transcribed_text_clean for phrase in interruption_phrases
+    )
+
+
 def send_mic_audio_to_websocket(ws):
     """Send microphone audio data to the WebSocket"""
     try:
         while not stop_event.is_set():
-            if not mic_queue.empty():
+            user_text: str = ""
+            while not mic_queue.empty():
                 mic_chunk = mic_queue.get()
-                user_text = transcribe_audio_to_text(mic_chunk)
+                transcribed_text = transcribe_audio_to_text(mic_chunk)
+                user_text += f"{transcribed_text} "
 
-                if user_text:
-                    print(f"\n🤠 ME speaking:\n {user_text}")
+                if stop_talking(transcribed_text):
+                    user_text = ""
                     clear_audio_buffer()
                     stop_audio_playback()
-                    create_conversation = json.dumps(
-                        {
-                            "type": "conversation.item.create",
-                            "item": {
-                                "type": "message",
-                                "role": "user",
-                                "content": [{"type": "input_text", "text": user_text}],
-                            },
-                        }
-                    )
-                    try:
-                        ws.send(create_conversation)  # initiate conversation
-                        create_response = json.dumps(
-                            {
-                                "type": "response.create",
-                                "response": {
-                                    "output_audio_format": "pcm16",
-                                },
-                            }
-                        )
-                        try:
-                            ws.send(create_response)  # request a response
-                        except Exception as e:
-                            print(f"Error sending mic audio: {e}")
-                    except Exception as e:
-                        print(f"Error sending mic audio: {e}")
+                    break
+
+            if user_text:
+                print(f"\n🤠 ME speaking:\n{user_text}")
+                # create_conversation = json.dumps(
+                #     {
+                #         "type": "conversation.item.create",
+                #         "item": {
+                #             "type": "message",
+                #             "role": "user",
+                #             "content": [{"type": "input_text", "text": user_text}],
+                #         },
+                #     }
+                # )
+                # try:
+                #     ws.send(create_conversation)  # initiate conversation
+                #     create_response = json.dumps(
+                #         {
+                #             "type": "response.create",
+                #             "response": {
+                #                 "output_audio_format": "pcm16",
+                #             },
+                #         }
+                #     )
+                #     try:
+                #         ws.send(create_response)  # request a response
+                #     except Exception as e:
+                #         print(f"Error sending mic audio: {e}")
+                # except Exception as e:
+                #     print(f"Error sending mic audio: {e}")
     except Exception as e:
         print(f"Exception in send_mic_audio_to_websocket thread: {e}")
     finally:
@@ -408,7 +423,6 @@ def main():
         listener_thread = recorder.listen_in_background(
             source, recorder_callback, phrase_time_limit=2
         )
-        # mic_stream.start_stream()
         speaker_stream.start_stream()
 
         connect_to_openai()
