@@ -25,8 +25,9 @@ REENGAGE_DELAY_MS = 500
 # set constants based on openAI's requirements
 # see input_audio_format -> https://platform.openai.com/docs/api-reference/realtime-sessions/create
 FORMAT = pyaudio.paInt16
-RATE = 24000
-CHANNELS = 1
+RATE = 24000  # 24kHz
+CHANNELS = 1  # mono
+BYTES_PER_SAMPLE = 2  # 16-bit PCM: 2 bytes per sample
 
 model = WhisperModel(
     "medium",
@@ -37,7 +38,6 @@ model = WhisperModel(
 
 audio_buffer = bytearray()
 mic_queue = queue.Queue()
-gpt_queue = queue.Queue()
 recorder = sr.Recognizer()
 recorder.energy_threshold = 1000
 # dynamic energy compensation, lowers the energy threshold to a point where SpeechRecognizer never stops recording
@@ -156,7 +156,7 @@ def should_ai_respond(user_text: str) -> bool:
     elif is_question:
         return answer_chance < 0.9  # 90% chance to respond to questions
     else:
-        return answer_chance < 0.3  # 30% chance to respond to statements
+        return answer_chance < 0.5  # 50% chance to respond to statements
 
 
 def transcribe_audio_to_text(mic_chunk: any) -> str:
@@ -235,9 +235,15 @@ def transcribe_and_send_to_websocket(ws):
                 user_text += f"{transcribed_text} "
 
                 if stop_talking(transcribed_text):
-                    user_text = ""
                     clear_audio_buffer()
                     stop_audio_playback()
+
+                    chance_to_deny = random.random()
+                    if chance_to_deny < 0.5:
+                        user_text = ""
+                    else:
+                        user_text = "Antworte mit 'Nein mach ich nicht' und knüpfe an deiner letzten Aussage an."
+
                     break
 
             # only send data if AI isn't talking anymore
@@ -324,7 +330,11 @@ def send_fc_session_update(ws):
             "instructions": (
                 f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ständig genervten und gehässigen Person spielt,"
                 "die zudem noch passiv aggressiv ist und sehr ironisch zu gleich."
-                "Außerdem sollst du mich manchmal auf den arm nehmen."
+                "Außerdem sollst du:"
+                "- manchmal nur das nötigste antworten."
+                "- mir niemals wiedersprechen."
+                "- mir manchmal auffällig ausgedachte Antworten geben."
+                "- mich manchmal auf den arm nehmen."
             ),
             "turn_detection": {
                 "type": "server_vad",
