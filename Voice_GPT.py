@@ -86,7 +86,7 @@ def main():
                 transcription = recognizer.recognize_google(audio, language=LANGUAGE)
                 if transcription.lower() == "hey tom":
                     # Record audio
-                    own_recorded_audio_file = "own_recorded_audio.wav"
+                    own_recorded_audio_file = "/audio/own_recorded_audio.wav"
                     print("Say your question...")
                     with sr.Microphone() as source:
                         recognizer = sr.Recognizer()
@@ -107,7 +107,7 @@ def main():
 
                         # Generate the audio response
                         wav_bytes = base64.b64decode(audio_data_response)
-                        gpt_response_audio_file = "gpt-response_audio.wav"
+                        gpt_response_audio_file = "/audio/gpt-response_audio.wav"
                         with open(gpt_response_audio_file, "wb") as f:
                             f.write(wav_bytes)
 
