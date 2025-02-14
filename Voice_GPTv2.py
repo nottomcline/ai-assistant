@@ -219,9 +219,9 @@ def send_transcription_to_websocket(ws, user_text: str):
         try:
             ws.send(create_response)  # request a response
         except Exception as e:
-            print(f"Error sending mic audio: {e}")
+            print(f"Error sending mic audio in send_transcription_to_websocket: {e}")
     except Exception as e:
-        print(f"Error sending mic audio: {e}")
+        print(f"Error sending mic audio in send_transcription_to_websocket: {e}")
 
 
 def transcribe_and_send_to_websocket(ws):
@@ -253,9 +253,9 @@ def transcribe_and_send_to_websocket(ws):
                 send_transcription_to_websocket(ws, user_text)
 
     except Exception as e:
-        print(f"Exception in send_mic_audio_to_websocket thread: {e}")
+        print(f"Exception in transcribe_and_send_to_websocket thread: {e}")
     finally:
-        print("Exiting send_mic_audio_to_websocket thread.")
+        print("Exiting transcribe_and_send_to_websocket thread.")
 
 
 def speaker_callback(in_data, frame_count, time_info, status):
