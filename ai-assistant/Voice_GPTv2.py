@@ -12,9 +12,8 @@ import pyaudio
 import socks
 import speech_recognition as sr
 import websocket
-from faster_whisper import WhisperModel
-
 from credentials import OPENAI_API_KEY
+from faster_whisper import WhisperModel
 
 socket.socket = socks.socksocket
 
