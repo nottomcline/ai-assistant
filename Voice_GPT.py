@@ -1,3 +1,8 @@
+# This is just a small non-realtime solution using soundfiles to store mic inputs and gpt outpus
+# use it if you're searching for a "blueprint"-projekt, as start to create your own ai-assistant
+# pros: simple and easy to use
+# const: not realtime, always require an key-word to proceed
+
 from __future__ import annotations
 
 import base64
