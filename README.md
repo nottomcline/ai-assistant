@@ -59,3 +59,6 @@ So when it comes to realtime usage there are a couple of things to consider:
     if you're speaking or not, you can also use your own VAD, but I'm to dump to know how. The VAD can be
     "activated" and "deactivated" in the `session.update`/ `session.create` event by using
     (`turn_detection: {something: something}`) or not using (`turn_detection: None`) the `turn_detection` object.
+-   when you're trying to use some fancy "local" transcription Model (like `faster-whisper`), note that you have to
+    have a "highend PC" to actually be faster than openAI's Whisper Model. If you have a shitty pc like me I would
+    prefere using the API, but if you're a game and have a highend PC you could try the local library `faster-whisper`
