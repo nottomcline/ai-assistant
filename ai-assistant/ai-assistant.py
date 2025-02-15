@@ -1,19 +1,21 @@
 import base64
+import io
 import json
+import os
 import queue
 import random
 import re
 import socket
 import threading
 import time
+import wave
 
-import numpy as np
 import pyaudio
 import socks
 import speech_recognition as sr
 import websocket
 from credentials import OPENAI_API_KEY
-from faster_whisper import WhisperModel
+from openai import OpenAI
 
 socket.socket = socks.socksocket
 
@@ -27,23 +29,18 @@ FORMAT = pyaudio.paInt16
 RATE = 24000  # 24kHz
 CHANNELS = 1  # mono
 BYTES_PER_SAMPLE = 2  # 16-bit PCM: 2 bytes per sample
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-model = WhisperModel(
-    "medium",
-    device="cpu",
-    compute_type="float32",
-    num_workers=16,
-)
 
-audio_buffer = bytearray()
+client = OpenAI(api_key=OPENAI_API_KEY)
+gpt_audio_buffer = bytearray()
 mic_queue = queue.Queue()
+mic_on_at = 0
+stop_event = threading.Event()
 recorder = sr.Recognizer()
 recorder.energy_threshold = 1000
 # dynamic energy compensation, lowers the energy threshold to a point where SpeechRecognizer never stops recording
 recorder.dynamic_energy_threshold = False
-
-mic_on_at = 0
-stop_event = threading.Event()
 
 
 def recorder_callback(_, audio: sr.AudioData) -> None:
@@ -52,13 +49,13 @@ def recorder_callback(_, audio: sr.AudioData) -> None:
     audio: An AudioData containing the recorded bytes.
     """
     # Grab the raw bytes and push it into the thread safe queue.
-    data = audio.get_raw_data(convert_rate=RATE)
-    mic_queue.put(data)
+    wave_data = audio.get_wav_data(convert_rate=RATE, convert_width=BYTES_PER_SAMPLE)
+    mic_queue.put(wave_data)
 
 
 def clear_audio_buffer():
-    global audio_buffer
-    audio_buffer = bytearray()
+    global gpt_audio_buffer
+    gpt_audio_buffer = bytearray()
 
 
 def stop_audio_playback():
@@ -158,31 +155,6 @@ def should_ai_respond(user_text: str) -> bool:
         return answer_chance < 0.5  # 50% chance to respond to statements
 
 
-def transcribe_audio_to_text(mic_chunk: any) -> str:
-    """Transcribes audio chunks in real-time using faster_whisper."""
-    try:
-        audio_data = bytearray()
-        audio_data.extend(mic_chunk)  # Append directly
-
-        # Convert in-ram buffer to something the model can use directly without needing a temp audio file.
-        # Convert data from 16 bit wide integers to floating point with a width of 32 bits.
-        # Clamp the audio stream frequency to a PCM wavelength compatible default of 32768hz max.
-        audio_np = (
-            np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-        )
-
-        # Perform transcription using the Whisper model
-        segments, _ = model.transcribe(audio_np, language="de", beam_size=10)
-
-        # Extract and return the transcribed text
-        transcribed_text = " ".join([segment.text for segment in segments])
-
-        return transcribed_text.strip()
-    except Exception as e:
-        print(f"Error in transcription: {e}")
-        return ""
-
-
 def stop_talking(transcribed_text: str):
     interruption_phrases = ["halts maul", "sei still", "hör auf", "leck ei"]
 
@@ -225,31 +197,47 @@ def send_transcription_to_websocket(ws, user_text: str):
 
 def transcribe_and_send_to_websocket(ws):
     """Send microphone audio data to the WebSocket"""
+    user_audio_buffer = io.BytesIO()
+    own_recorded_audio_file = os.path.join(BASE_DIR, "audio", "own_recorded_audio.wav")
+    processing_mic_audio = False
     try:
         while not stop_event.is_set():
             user_text: str = ""
             while not mic_queue.empty():
                 mic_chunk = mic_queue.get()
-                transcribed_text = transcribe_audio_to_text(mic_chunk)
-                user_text += f"{transcribed_text} "
+                user_audio_buffer.write(mic_chunk)
+                processing_mic_audio = True
 
-                if stop_talking(transcribed_text):
-                    clear_audio_buffer()
-                    stop_audio_playback()
+            if processing_mic_audio:
+                # Save buffer to WAV file with correct headers
+                with wave.open(own_recorded_audio_file, "wb") as f:
+                    f.setnchannels(1)  # Mono
+                    f.setsampwidth(BYTES_PER_SAMPLE)  # 16-bit PCM
+                    f.setframerate(RATE)  # 24kHz sample rate
+                    f.writeframes(user_audio_buffer.getvalue())
 
+                with open(own_recorded_audio_file, "rb") as audio_file:
+                    transcription = client.audio.transcriptions.create(
+                        model="whisper-1", file=audio_file
+                    )
+
+                user_text += f"{transcription.text} "
+                processing_mic_audio = False
+                user_audio_buffer = io.BytesIO()
+                if stop_talking(transcription.text):
+                    # Reset the buffer for the next utterance
                     chance_to_deny = random.random()
                     if chance_to_deny < 0.5:
                         user_text = ""
                     else:
                         user_text = "Antworte mit 'Nein mach ich nicht' und knüpfe an deiner letzten Aussage an."
-
                     break
 
-            # only send data if AI isn't talking anymore
-            if user_text and len(audio_buffer) == 0:
-                print(f"\n🤠 ME speaking:\n{user_text}")
+                # only send data if AI isn't talking anymore
+                if user_text and mic_queue.empty():
+                    print(f"\n🤠 ME speaking:\n{user_text}")
 
-                send_transcription_to_websocket(ws, user_text)
+                    send_transcription_to_websocket(ws, user_text)
 
     except Exception as e:
         print(f"Exception in transcribe_and_send_to_websocket thread: {e}")
@@ -259,27 +247,27 @@ def transcribe_and_send_to_websocket(ws):
 
 def speaker_callback(in_data, frame_count, time_info, status):
     """Handle audio playback callback"""
-    global audio_buffer, mic_on_at
+    global gpt_audio_buffer, mic_on_at
 
     bytes_needed = frame_count * 2
-    current_buffer_size = len(audio_buffer)
+    current_buffer_size = len(gpt_audio_buffer)
 
     if current_buffer_size >= bytes_needed:
-        audio_chunk = bytes(audio_buffer[:bytes_needed])
-        audio_buffer = audio_buffer[bytes_needed:]
+        audio_chunk = bytes(gpt_audio_buffer[:bytes_needed])
+        gpt_audio_buffer = gpt_audio_buffer[bytes_needed:]
         mic_on_at = time.time() + REENGAGE_DELAY_MS / 1000
     else:
-        audio_chunk = bytes(audio_buffer) + b"\x00" * (
+        audio_chunk = bytes(gpt_audio_buffer) + b"\x00" * (
             bytes_needed - current_buffer_size
         )
-        audio_buffer.clear()
+        gpt_audio_buffer.clear()
 
     return (audio_chunk, pyaudio.paContinue)
 
 
 def receive_audio_from_websocket(ws):
     """Receive audio data from the WebSocket and process events"""
-    global audio_buffer
+    global gpt_audio_buffer
 
     try:
         while not stop_event.is_set():
@@ -303,7 +291,7 @@ def receive_audio_from_websocket(ws):
 
                 elif event_type == "response.audio.delta":
                     audio_content = base64.b64decode(message["delta"])
-                    audio_buffer.extend(audio_content)
+                    gpt_audio_buffer.extend(audio_content)
 
                 elif event_type == "response.audio_transcript.done":
                     print()  # Print newline when final transcript is received
@@ -438,9 +426,7 @@ def main():
     )
 
     try:
-        listener_thread = recorder.listen_in_background(
-            source, recorder_callback, phrase_time_limit=2
-        )
+        listener_thread = recorder.listen_in_background(source, recorder_callback)
         speaker_stream.start_stream()
 
         connect_to_openai()

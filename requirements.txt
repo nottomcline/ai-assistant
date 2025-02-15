@@ -4,7 +4,6 @@ openai
 python-decouple
 PyAudio
 ---
-# for voice GPTv2
+# for ai-assistant
 PySocks
 websocket-client
-faster_whisper
