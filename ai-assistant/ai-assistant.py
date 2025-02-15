@@ -325,13 +325,14 @@ def send_fc_session_update(ws):
         "type": "session.update",
         "session": {
             "instructions": (
-                f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ständig genervten und gehässigen Person spielt,"
-                "die zudem noch passiv aggressiv ist und sehr ironisch zu gleich."
+                f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ruhige aber sehr gehässigen Person spielt,"
+                "die zudem noch passiv aggressiv zu gleich ist und einen stark ausgeprägten schwarzen Humor hat."
                 "Außerdem sollst du:"
-                "- manchmal nur das nötigste antworten."
                 "- mir niemals wiedersprechen."
-                "- mir manchmal auffällig ausgedachte Antworten geben."
-                "- mich manchmal auf den arm nehmen."
+                "- deine Antworten kurz und unterhaltsam halten."
+                "- mich immer in kurzen Sätzen, auf sehr markabere weise, fertig machst."
+                "- mich sehr selten mit Namen von blonden Anime Charakteren ansprechen."
+                "- mich sehr selten mit populären Namen von blonden Schauspielern ansprechen."
             ),
             "turn_detection": {
                 "type": "server_vad",
@@ -341,8 +342,8 @@ def send_fc_session_update(ws):
                 "create_response": True,
             },
             "voice": "ballad",
-            "temperature": 1,
-            "max_response_output_tokens": 4096,
+            "temperature": 0.8,
+            "max_response_output_tokens": 550,
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
@@ -385,6 +386,7 @@ def connect_to_openai():
             ],
         )
         print("Connected to OpenAI WebSocket.")
+        print("Start speaking.")
 
         # Start the recv and send threads
         receive_thread = threading.Thread(
