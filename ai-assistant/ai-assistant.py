@@ -156,7 +156,16 @@ def should_ai_respond(user_text: str) -> bool:
 
 
 def stop_talking(transcribed_text: str):
-    interruption_phrases = ["halts maul", "sei still", "hör auf", "leck ei"]
+    interruption_phrases = [
+        "halts maul",
+        "halt's maul",
+        "halt's maul!",
+        "sei still",
+        "Seid still!",
+        "hör auf",
+        "leck ei",
+        "Leck eu!",
+    ]
 
     # Remove punctuation from the transcribed text
     transcribed_text_clean = re.sub(r"[^\w\s]", "", transcribed_text.lower())
@@ -229,9 +238,10 @@ def transcribe_and_send_to_websocket(ws):
                     chance_to_deny = random.random()
                     if chance_to_deny < 0.5:
                         user_text = ""
+                        clear_audio_buffer()
+                        stop_audio_playback()
                     else:
                         user_text = "Antworte mit 'Nein mach ich nicht' und knüpfe an deiner letzten Aussage an."
-                    break
 
                 # only send data if AI isn't talking anymore
                 if user_text and mic_queue.empty():
