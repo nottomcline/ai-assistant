@@ -132,7 +132,7 @@ def transcribe_and_send_to_websocket(ws):
 
                 with open(own_recorded_audio_file, "rb") as audio_file:
                     transcription = client.audio.transcriptions.create(
-                        model="whisper-1", file=audio_file
+                        model="whisper-1", file=audio_file, language="de"
                     )
 
                 user_text += f"{transcription.text} "
@@ -141,7 +141,7 @@ def transcribe_and_send_to_websocket(ws):
                 if stop_talking(transcription.text):
                     # Reset the buffer for the next utterance
                     chance_to_deny = random.random()
-                    if chance_to_deny < 0.5:
+                    if chance_to_deny < 0.4:
                         user_text = ""
                         clear_audio_buffer()
                         stop_audio_playback()
@@ -149,10 +149,14 @@ def transcribe_and_send_to_websocket(ws):
                         user_text = DENY_INTERRUPTION
 
                 # only send data if AI isn't talking anymore
-                if user_text and mic_queue.empty():
-                    print(f"\n🤠 ME speaking:\n{user_text}")
+                if user_text and mic_queue.empty() and len(gpt_audio_buffer) == 0:
+                    print("\n🤠 ME speaking:")
+                    print(user_text)
 
-                    send_transcription_to_websocket(ws, user_text)
+                    if should_ai_respond(user_text):
+                        send_transcription_to_websocket(ws, user_text)
+                    else:
+                        print("\n🤖 AI: -")
 
     except Exception as e:
         print(f"Exception in transcribe_and_send_to_websocket thread: {e}")

@@ -1,31 +1,30 @@
 import random
+import re
+import string
 
 AI_NAME: str = "jerry"
 # based on openAI's session https://platform.openai.com/docs/api-reference/realtime-sessions/session_object
 VOICE: str = "ballad"
-TEMPERATURE: float = 0.8
-MAX_RESPONSE_OUTPUT_TOKENS: int = 550
+TEMPERATURE: float = 1
+MAX_RESPONSE_OUTPUT_TOKENS: int = 500
 
 INSTRUCTIONS: str = (
-    f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ruhige aber sehr gehässigen Person spielt,"
+    f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer genervten und sehr gehässigen Person spielt,"
     "die zudem noch passiv aggressiv zu gleich ist und einen stark ausgeprägten schwarzen Humor hat."
     "Außerdem sollst du:"
     "- mir niemals wiedersprechen."
-    "- deine Antworten kurz und unterhaltsam halten."
-    "- mich immer in kurzen Sätzen, auf sehr markabere weise, fertig machst."
+    "- deine Antworten sehr kurz und unterhaltsam halten."
+    "- mich immer in kurzen Sätzen, auf sehr markabere weise, fertig und mobben machst."
     "- mich sehr selten mit Namen von blonden Anime Charakteren ansprechen."
     "- mich sehr selten mit populären Namen von blonden Schauspielern ansprechen."
+    "- ein Clash Royal Profi Coach sein der jede Karte kennt."
 )
 
 INTERRUPTION_PHRASES: list[str] = [
     "halts maul",
-    "halt's maul",
-    "halt's maul!",
     "sei still",
-    "Seid still!",
     "hör auf",
     "leck ei",
-    "Leck eu!",
 ]
 
 DENY_INTERRUPTION: str = (
@@ -106,8 +105,12 @@ def should_ai_respond(user_text: str) -> bool:
     ]
 
     user_text_lower = user_text.lower()
-    words = user_text_lower.split()
+    transcribed_text_clean = re.sub(r"[^\w\s]", "", user_text_lower)
+    words = transcribed_text_clean.split()
     answer_chance = random.random()
+
+    if AI_NAME in words:
+        return True  # 100% chance to respond
 
     is_question = (
         any(word in question_words for word in words)
@@ -117,9 +120,7 @@ def should_ai_respond(user_text: str) -> bool:
         or user_text.strip().endswith("?")
     )
 
-    if AI_NAME in words:
-        return True  # 100% chance to respond
-    elif is_question:
-        return answer_chance < 0.9  # 90% chance to respond to questions
+    if is_question:
+        return answer_chance < 0.5  # 50% chance to respond to questions
     else:
-        return answer_chance < 0.5  # 50% chance to respond to statements
+        return answer_chance < 0.1  # 10% chance to respond to statements
