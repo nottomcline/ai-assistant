@@ -14,6 +14,15 @@ import pyaudio
 import socks
 import speech_recognition as sr
 import websocket
+from ai_personality import (
+    DENY_INTERRUPTION,
+    INSTRUCTIONS,
+    INTERRUPTION_PHRASES,
+    MAX_RESPONSE_OUTPUT_TOKENS,
+    TEMPERATURE,
+    VOICE,
+    should_ai_respond,
+)
 from credentials import OPENAI_API_KEY
 from openai import OpenAI
 
@@ -21,7 +30,6 @@ socket.socket = socks.socksocket
 
 WS_URL = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17"
 CHUNK_SIZE = 4096
-AI_NAME = "jerry"
 REENGAGE_DELAY_MS = 500
 # set constants based on openAI's requirements
 # see input_audio_format -> https://platform.openai.com/docs/api-reference/realtime-sessions/create
@@ -63,115 +71,12 @@ def stop_audio_playback():
     is_playing = False
 
 
-def should_ai_respond(user_text: str) -> bool:
-    """Determines if AI should respond based on input type and probability."""
-
-    question_words = {
-        "wer",
-        "was",
-        "wo",
-        "wann",
-        "warum",
-        "wie",
-        "macht",
-        "ist",
-        "kann",
-        "könnte",
-        "sollte",
-        "würde",
-        "wird",
-        "hat",
-        "sind",
-        "bin",
-        "welche",
-        "wessen",
-        "wen",
-        "vielleicht",
-        "dürfen",
-        "ob",
-        "wenn",
-        "wie viele",
-        "wie viel",
-        "was wäre wenn",
-        "warum nicht",
-        "was ist mit",
-        "glaubst du",
-        "ist es wahr, dass",
-        "bist du sicher",
-        "wirklich",
-        "ernsthaft",
-    }
-
-    indirect_question_words = {
-        "könnte",
-        "würde",
-        "sollte",
-        "kann",
-        "dürfen",
-        "vielleicht",
-        "müssen",
-        "brauchen",
-        "wollen",
-        "fragen",
-        "nachfragen",
-        "wundern",
-    }
-
-    subjunctive_words = {
-        "wäre",
-        "hätte",
-        "würde",
-        "sei",
-        "habe",
-    }
-
-    uncertainty_phrases = [
-        "ich bin mir nicht sicher",
-        "ich weiß nicht",
-        "ich frage mich",
-        "ist das wahr",
-        "ist es möglich",
-        "glaubst du",
-        "was wäre wenn",
-    ]
-
-    user_text_lower = user_text.lower()
-    words = user_text_lower.split()
-    answer_chance = random.random()
-
-    is_question = (
-        any(word in question_words for word in words)
-        or any(word in indirect_question_words for word in words)
-        or any(word in subjunctive_words for word in words)
-        or any(phrase in user_text_lower for phrase in uncertainty_phrases)
-        or user_text.strip().endswith("?")
-    )
-
-    if AI_NAME in words:
-        return True  # 100% chance to respond
-    elif is_question:
-        return answer_chance < 0.9  # 90% chance to respond to questions
-    else:
-        return answer_chance < 0.5  # 50% chance to respond to statements
-
-
 def stop_talking(transcribed_text: str):
-    interruption_phrases = [
-        "halts maul",
-        "halt's maul",
-        "halt's maul!",
-        "sei still",
-        "Seid still!",
-        "hör auf",
-        "leck ei",
-        "Leck eu!",
-    ]
-
     # Remove punctuation from the transcribed text
     transcribed_text_clean = re.sub(r"[^\w\s]", "", transcribed_text.lower())
     words = transcribed_text_clean.split()
     return "stopp" in words or any(
-        phrase in transcribed_text_clean for phrase in interruption_phrases
+        phrase in transcribed_text_clean for phrase in INTERRUPTION_PHRASES
     )
 
 
@@ -241,7 +146,7 @@ def transcribe_and_send_to_websocket(ws):
                         clear_audio_buffer()
                         stop_audio_playback()
                     else:
-                        user_text = "Antworte mit 'Nein mach ich nicht' und knüpfe an deiner letzten Aussage an."
+                        user_text = DENY_INTERRUPTION
 
                 # only send data if AI isn't talking anymore
                 if user_text and mic_queue.empty():
@@ -324,16 +229,7 @@ def send_fc_session_update(ws):
     session_config = {
         "type": "session.update",
         "session": {
-            "instructions": (
-                f"Du heißt {AI_NAME} und bist ein Schauspieler, der die Rolle einer ruhige aber sehr gehässigen Person spielt,"
-                "die zudem noch passiv aggressiv zu gleich ist und einen stark ausgeprägten schwarzen Humor hat."
-                "Außerdem sollst du:"
-                "- mir niemals wiedersprechen."
-                "- deine Antworten kurz und unterhaltsam halten."
-                "- mich immer in kurzen Sätzen, auf sehr markabere weise, fertig machst."
-                "- mich sehr selten mit Namen von blonden Anime Charakteren ansprechen."
-                "- mich sehr selten mit populären Namen von blonden Schauspielern ansprechen."
-            ),
+            "instructions": INSTRUCTIONS,
             "turn_detection": {
                 "type": "server_vad",
                 "threshold": 0.5,
@@ -341,9 +237,9 @@ def send_fc_session_update(ws):
                 "silence_duration_ms": 500,
                 "create_response": True,
             },
-            "voice": "ballad",
-            "temperature": 0.8,
-            "max_response_output_tokens": 550,
+            "voice": VOICE,
+            "temperature": TEMPERATURE,
+            "max_response_output_tokens": MAX_RESPONSE_OUTPUT_TOKENS,
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
