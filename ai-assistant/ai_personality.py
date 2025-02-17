@@ -1,6 +1,5 @@
 import random
 import re
-import string
 
 AI_NAME: str = "jerry"
 # based on openAI's session https://platform.openai.com/docs/api-reference/realtime-sessions/session_object
