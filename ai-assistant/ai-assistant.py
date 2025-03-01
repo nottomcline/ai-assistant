@@ -46,7 +46,7 @@ mic_queue = queue.Queue()
 mic_on_at = 0
 stop_event = threading.Event()
 recorder = sr.Recognizer()
-recorder.energy_threshold = 1000
+recorder.energy_threshold = 1200
 # dynamic energy compensation, lowers the energy threshold to a point where SpeechRecognizer never stops recording
 recorder.dynamic_energy_threshold = False
 
@@ -247,7 +247,6 @@ def send_fc_session_update(ws):
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "pcm16",
-            "input_audio_transcription": {"model": "whisper-1"},
             "tool_choice": "auto",
             "tools": [],
         },
